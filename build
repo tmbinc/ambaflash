@@ -1,0 +1,2 @@
+cargo xbuild --target=aarch64-unknown-none.json --release
+objcopy -O binary target/aarch64-unknown-none/release/affr affr.bin
