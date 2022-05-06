@@ -51,6 +51,15 @@ pub fn debug_hex8(val: u8) {
     }
 }
 
+unsafe fn write_mask(addr: u32, clear: u32, set: u32) {
+    let mut val = core::ptr::read_volatile(addr as *const u32);
+
+    val &= !clear;
+    val |= set;
+
+    core::ptr::write_volatile(addr as *mut u32, val);
+}
+
 fn main() -> () {
     debug("AArch64 Bare Metal, 2.0!\n");
 
@@ -60,5 +69,24 @@ fn main() -> () {
     }
 
     nand::nand_init();
+
+    // PLL init
+    unsafe {
+        write_mask(0xEC170264, 8, 0);
+        write_mask(0xEC170000, 8, 0);
+        write_mask(0xEC1700DC, 8, 0); // PLL_DDR_CTRL_OFFSET
+        write_mask(0xEC1700E4, 8, 0);
+        write_mask(0xEC1704AC, 8, 0);
+        write_mask(0xEC1700E4, 0xF000, 0);
+        write_mask(0xEC1700E4, 0xFF000, 0);
+        write_mask(0xEC1701F4, 0xF0, 0);
+        write_mask(0xEC170054, 0, 8);
+        write_mask(0xEC170748, 0, 8);
+        write_mask(0xEC170024, 0, 8);
+        write_mask(0xEC1706BC, 0, 8);
+        write_mask(0xEC170164, 0, 8);
+        write_mask(0xEC1700C0, 0, 8);
+    }
+
     usb::usb_test();
 }

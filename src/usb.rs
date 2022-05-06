@@ -18,6 +18,11 @@ fn debug_hex32(_val: u32) {}
 
 fn debug_hex8(_val: u8) {}
 
+fn dummy_delay()
+{
+    crate::debug("l");
+}
+
 register_structs! {
     UsbDevRegisters {
         (0x0000 => cfg: ReadWrite<u32, UsbDevCfg::Register>),
@@ -369,6 +374,7 @@ enum Direction {
     Out,
 }
 
+#[allow(dead_code)]
 #[derive(PartialEq)]
 enum EndpointType {
     Ctrl,
@@ -464,7 +470,7 @@ struct Endpoint {
     index: usize,
     ep_num: usize,
     direction: Direction,
-    speed: UsbSpeed,
+    _speed: UsbSpeed,
     ep_type: EndpointType,
     usb_setup_pkt: UsbSetupPkt,
     usb_data_desc: UsbDataDesc,
@@ -485,7 +491,7 @@ impl Endpoint {
             index: index,
             ep_num: ep_num,
             direction: direction,
-            speed: speed,
+            _speed: speed,
             ep_type: ep_type,
             usb_setup_pkt: UsbSetupPkt::const_default(),
             usb_data_desc: UsbDataDesc::const_default(),
@@ -667,6 +673,7 @@ impl Endpoint {
         debug(" << numbytes\n");
 
         debug("OLD descriptor status: ");
+        dummy_delay();
         cache::clean_d_cache(&self.usb_data_desc);
         debug_hex32(self.usb_data_desc.status.get());
         debug("\n");
@@ -713,12 +720,16 @@ impl Endpoint {
     fn handle_vendor_request(&mut self, ep_in: &mut Endpoint, setup_pkt: &[u8; 8]) {
         let _w_value: u16 = u16::from_le_bytes(setup_pkt[2..4].try_into().unwrap());
         let _w_index: u16 = u16::from_le_bytes(setup_pkt[4..6].try_into().unwrap());
-        let w_length: u16 = min(
+        let _w_length: u16 = min(
             u16::from_le_bytes(setup_pkt[6..8].try_into().unwrap()),
             ep_in.dma_buf.buf.len() as u16,
         );
 
-        /* if setup_pkt[0] & 0x80 == 0x80 {
+        /*
+
+        Old code for processing vendor requests:
+
+        if setup_pkt[0] & 0x80 == 0x80 {
             let tx_size = w_length as usize;
 
             let data_receiver = &mut ep_in.data_receiver.as_mut().unwrap();
@@ -726,7 +737,6 @@ impl Endpoint {
             ep_in.start_tx(tx_size_valid as u32);
             self.start_rx();
         } else {
-            debug("receive .. dunno how exactly this works.\n");
             ep_in
                 .data_receiver
                 .as_mut()
@@ -783,6 +793,7 @@ impl Endpoint {
             == 0
         {
             debug("SETUP done, reinit...!\n");
+            dummy_delay();
             self.initialize_setup_pkt();
             let usb_dev_regs = usb_dev_registers();
             usb_dev_regs
@@ -791,7 +802,7 @@ impl Endpoint {
         } else {
             debug("NOT a setup packet.\n");
 
-            let rx_data: &[u8] = &self.dma_buf.buf[0..self
+            let _rx_data: &[u8] = &self.dma_buf.buf[0..self
                 .usb_data_desc
                 .status
                 .read(DmaStatus::USB_DMA_RXTX_BYTES)
@@ -804,6 +815,8 @@ impl Endpoint {
             {
                 Some(DmaStatus::USB_DMA_BUF_STS::Value::DmaDone) => {
                     debug("DMA DONE (on RX)!\n");
+
+                    // Old code to support vendor reqests with data:
                     /* ep_in.data_receiver.as_mut().unwrap().write(rx_data); */
 
                     // re-setup etc.
@@ -994,23 +1007,21 @@ impl Endpoint {
             if int_status.is_set(UsbEpSts::USB_EP_IN_PKT) {
                 debug("  USB_EP_IN_PKT\n");
                 regs_ep_in.sts.write(UsbEpSts::USB_EP_IN_PKT::SET);
-
-                self.bulk_in_handler(consumer);
             }
 
             if int_status.is_set(UsbEpSts::USB_EP_BUF_NOT_AVAIL) {
-                debug("  USB_EP_BUF_NOT_AVAIL\n");
+                crate::debug("  USB_EP_BUF_NOT_AVAIL\n");
                 regs_ep_in.sts.write(UsbEpSts::USB_EP_BUF_NOT_AVAIL::SET);
             }
 
             if int_status.is_set(UsbEpSts::USB_EP_HOST_ERR) {
-                debug("  USB_EP_HOST_ERR\n");
+                crate::debug("  USB_EP_HOST_ERR\n");
                 regs_ep_in.sts.write(UsbEpSts::USB_EP_HOST_ERR::SET);
             }
 
             if int_status.is_set(UsbEpSts::USB_EP_TXFIFO_EMPTY) {
-                debug("  USB_EP_TXFIFO_EMPTY\n");
                 regs_ep_in.sts.write(UsbEpSts::USB_EP_TXFIFO_EMPTY::SET);
+                self.bulk_in_handler(consumer);
             }
 
             debug("  REMAINING STATUS: ");
@@ -1057,7 +1068,9 @@ impl Endpoint {
 
     fn handle_interrupt(&mut self, ep_in: &mut Endpoint, consumer: &mut UsbReceiveBuffers) {
         // lol.
-        cache::_clean_flush_d_cache();
+        // cache::_clean_flush_d_cache();
+
+        dummy_delay();
 
         debug("EP interrupt -> ");
         if self.ep_num == 0 && self.direction == Direction::Out {
@@ -1139,7 +1152,7 @@ impl Usb {
         }
     }
 
-    fn set_softdisc(&mut self) {
+    fn _set_softdisc(&mut self) {
         self.usb_dev_regs
             .ctrl
             .modify(UsbDevCtrl::USB_DEV_SOFT_DISCON::SET);
@@ -1421,7 +1434,13 @@ pub fn usb_test() {
     debug("init usb...\n");
     usb.initialize();
 
-    let mut counter = 0_u32;
+    let dmabuf_addr: u32 = 0x400000;
+    let dmabuf_slice =
+        unsafe { core::slice::from_raw_parts_mut(dmabuf_addr as *mut u8, 0x800 as usize) };
+    let dmabuf_slice_spare = unsafe {
+        core::slice::from_raw_parts_mut((dmabuf_addr + 0x800) as *mut u8, 0x80 as usize)
+    };
+
     let mut s_buf: [u8; 0x880 * 16] = [0xCC; 0x880 * 16];
 
     loop {
@@ -1433,26 +1452,84 @@ pub fn usb_test() {
             continue;
         }
 
-        let addr: u32 = u32::from_le_bytes(sync[2..6].try_into().unwrap());
+        let cmd: u8 = sync[1];
+        let sector: usize = u32::from_le_bytes(sync[2..6].try_into().unwrap()) as usize;
+        let sector_size = 0x800;
+        let flash_addr = sector * sector_size;
         let numblocks: u16 = u16::from_le_bytes(sync[6..8].try_into().unwrap());
 
-        debug("reading data from nand...\n");
+        match cmd {
+            0 => {
+                debug("reading data from nand...\n");
 
-        let dst_addr: u32 = 0x400000;
-        let dst_slice =
-            unsafe { core::slice::from_raw_parts_mut(dst_addr as *mut u8, 0x880 as usize) };
 
-        for i in 0..(numblocks as usize) {
-            debug("read ");
-            debug_hex32(i as u32);
-            debug("\n");
-            debug("now\n");
-            nand::nand_read_block(1, 0x800, dst_slice, 0, addr + (i as u32));
-            debug("copy\n");
-            s_buf[i * 0x880..(i + 1) * 0x880].clone_from_slice(dst_slice);
+                for i in 0..(numblocks as usize) {
+                    nand::nand_read_block(
+                        1,
+                        0x800,
+                        dmabuf_slice,
+                        dmabuf_slice_spare,
+                        flash_addr + i * sector_size,
+                    );
+
+                    s_buf[i * 0x880..i * 0x880 + 0x800].clone_from_slice(dmabuf_slice);
+                    s_buf[i * 0x880 + 0x800..i * 0x880 + 0x880].clone_from_slice(dmabuf_slice_spare);
+                }
+                debug("done\n");
+                usb.write_data(&s_buf);
+            }
+            1 => {
+                // erase
+                let status: u32;
+                match nand::nand_erase_block(flash_addr) {
+                    Err(_) => status = 1,
+                    Ok(_) => status = 0,
+                }
+                s_buf[0..4].clone_from_slice(&status.to_le_bytes());
+                usb.write_data(&s_buf /* [0..4] */);
+            }
+            2 => {
+                // program
+                debug("program! reading sector data...\n");
+                usb.write_data(&s_buf /* [0..4] */);
+                usb.read_data(&mut s_buf);
+                debug("ok, programming\n");
+
+                let mut status: u32 = 0;
+
+                for i in 0..(numblocks as usize) {
+                    debug("clone\n");
+                    dmabuf_slice.clone_from_slice(&s_buf[i * 0x880..i * 0x880 + 0x800]);
+                    dmabuf_slice_spare.clone_from_slice(&s_buf[i * 0x880 + 0x800..i * 0x880 + 0x880]);
+                    debug("prog\n");
+
+                    // Skip programming all-FF blocks as I'm to stupid to configure BCH correctly to do so.
+                    if dmabuf_slice.iter().any(|b| *b != 0xFFu8) | dmabuf_slice_spare.iter().any(|b| *b != 0xFFu8) {
+
+                        match nand::nand_program(
+                            flash_addr + i * sector_size,
+                            1,
+                            dmabuf_slice,
+                            dmabuf_slice_spare,
+                        ) {
+                            Err(_) => {
+                                status = 1;
+                                break;
+                            }
+                            Ok(_) => {}
+                        };
+                    }
+
+                    debug("done\n");
+                }
+
+                s_buf[0..4].clone_from_slice(&status.to_le_bytes());
+                usb.write_data(&s_buf /* [0..4] */);
+            }
+            _ => {
+                s_buf[0..4].clone_from_slice(&0xdeadu32.to_le_bytes());
+                usb.write_data(&s_buf /* [0..4] */);
+            }
         }
-        debug("done\n");
-        usb.write_data(&s_buf);
-        counter += 1;
     }
 }

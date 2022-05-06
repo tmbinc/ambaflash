@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 /*---- bEndpointAddress ----*/
 pub const USB_EP_EP1_ADDRESS: u8 = USB_EP_OUT_ADDRESS | 0x01;
 pub const USB_EP_EP2_ADDRESS: u8 = USB_EP_IN_ADDRESS | 0x01;
